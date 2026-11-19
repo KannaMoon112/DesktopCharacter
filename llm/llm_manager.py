@@ -1080,7 +1080,7 @@ class LLMManager:
                         elif event.type == "content_block_start" and event.content_block.type == "tool_use":
                             has_tool_use = True
                             full_tool_calls[event.index] = {"id": event.content_block.id, "name": event.content_block.name, "input": ""}
-                        elif event.type == "record_delta" and event.delta.type == "input_json_delta":
+                        elif event.type == "content_block_delta" and event.delta.type == "input_json_delta":
                             full_tool_calls[event.index]["input"] += event.delta.partial_json
             else:
                 for chunk in response_stream:

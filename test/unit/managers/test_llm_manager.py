@@ -884,6 +884,72 @@ class TestLLMManagerToolCalling:
         assert parsed["head"] == "x" * 40
         assert parsed["tail"] == "x" * 40
 
+    def test_claude_stream_accumulates_input_json_delta_tool_arguments(self):
+        from llm.llm_adapter import ClaudeAdapter
+
+        class _FakeStream:
+            def __init__(self, events):
+                self._events = events
+
+            def __enter__(self):
+                return iter(self._events)
+
+            def __exit__(self, *exc):
+                return False
+
+        tool_round = [
+            SimpleNamespace(
+                type="content_block_start",
+                index=0,
+                content_block=SimpleNamespace(type="tool_use", id="toolu_1", name="claude_stream_echo"),
+            ),
+            SimpleNamespace(
+                type="content_block_delta",
+                index=0,
+                delta=SimpleNamespace(type="input_json_delta", partial_json='{"text": "he'),
+            ),
+            SimpleNamespace(
+                type="content_block_delta",
+                index=0,
+                delta=SimpleNamespace(type="input_json_delta", partial_json='llo"}'),
+            ),
+        ]
+        text_round = [
+            SimpleNamespace(
+                type="content_block_delta",
+                index=0,
+                delta=SimpleNamespace(type="text_delta", text="done"),
+            ),
+        ]
+        rounds = [tool_round, text_round]
+
+        adapter = ClaudeAdapter.__new__(ClaudeAdapter)
+        adapter.user_template = ""
+        adapter.system_prompt = ""
+        adapter._current_stream = None
+        adapter._current_response = None
+        adapter.model = "claude-test"
+        adapter.chat = lambda messages, stream=False, **kw: _FakeStream(rounds.pop(0))
+
+        received: list[str] = []
+
+        def claude_stream_echo(text: str) -> str:
+            """Echo text."""
+            received.append(text)
+            return text
+
+        ToolManager().register_function(claude_stream_echo, name="claude_stream_echo")
+        mgr = LLMManager(adapter=adapter, user_template="S")
+        output = "".join(
+            part for part in mgr.chat("hi", stream=True, include_local_time=False)
+            if isinstance(part, str)
+        )
+
+        assert received == ["hello"]
+        assert output == "done"
+        assistant = next(m for m in mgr.messages if m.get("tool_calls"))
+        assert json.loads(assistant["tool_calls"][0]["function"]["arguments"]) == {"text": "hello"}
+
     def test_chat_records_token_estimate_and_resets_tool_groups_sync(self, mock_llm_adapter):
         mock_llm_adapter.responses = ["Response."]
         mgr = LLMManager(adapter=mock_llm_adapter, user_template="System")
